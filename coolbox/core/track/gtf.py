@@ -14,25 +14,20 @@ from .base import Track
 
 log = get_logger(__name__)
 
-
+# %%
 class GTF(Track):
     """
     GTF gene annotation track.
-
     Parameters
     ----------
     file : str
         Path to .gtf(or .gtf.bgz) file.
-
     row_filter : str, optional
         Row filter expression, only keep the rows for draw. (Default 'feature == "gene"')
-
     length_ratio_thresh : float
         Length ratio threshold of features, (Default 0.01)
-
     color : {str, 'random'}, optional
         When the color is random, color for each gene will be randomly selected.
-
     name_attr : {'auto', 'gene_name', 'gene_id', str}, optional
         Use which attribute to show feature's name.
         Default use 'auto'(try 'gene_name' -> 'gene_id' -> 'position_string')
@@ -48,6 +43,8 @@ class GTF(Track):
     DEFAULT_PROPERTIES = {
         "height": 4,
         "color": "random",
+        "color_default": 'random',
+        "label_map": None,
         "row_filter": 'feature == "gene"',
         "length_ratio_thresh": 0.005,
         "name_attr": "auto",
@@ -64,6 +61,8 @@ class GTF(Track):
         color = self.properties['color']
         if (type(color) is str) and (color.startswith('#')):
             self.colors = [color]
+        elif isinstance(color, dict):
+            self.colors = color
         elif type(color) is list:
             self.colors = [c for c in color if (type(c) is str) and c.startswith('#')]
             if not self.colors:
@@ -77,20 +76,16 @@ class GTF(Track):
         -------
         df: pandas.DataFrame
             should be with the format like:
-
             columns = ['seqname', 'source', 'feature', 'start', 'end',
                         'score', 'strand', 'frame', 'attribute', 'feature_name']
-
         """
         return self.fetch_intervals(gr)
 
     def fetch_intervals(self, gr: GenomeRange):
         """
-
         Parameters
         ----------
         gr : {str, GenomeRange}
-
         Returns
         -------
         intervals : pandas.core.frame.DataFrame
@@ -121,6 +116,35 @@ class GTF(Track):
         else:
             df['feature_name'] = df['attribute'].str.extract(f".*{name_attr} (.*?) ").iloc[:, 0].str.strip('\";')
         return df
+    
+    def _choose_color(self, label):
+        """Return the color for a given label. 
+
+        Args:
+            label (str): Label name.
+
+        Returns:
+            str: Color. 
+        """
+        
+        if isinstance(self.colors, dict):
+            return self.colors.get(label, "#ffffff")
+        else:
+            return random.choice(self.colors)
+    
+    def _choose_label(self, label):
+        if 'label_map' in self.properties:
+            if isinstance(self.properties['label_map'], dict):
+                if label in self.properties['label_map']:
+                    return self.properties['label_map'][label]
+        return label
+
+    def _drop_label(self, label):
+        if 'label_map' in self.properties:
+            if 'drop_missing_labels' in self.properties:
+                if self.properties['drop_missing_labels']:
+                    return not (label in self.properties['label_map'])
+        return False
 
     def plot(self, ax, gr: GenomeRange, **kwargs):
         self.ax = ax
@@ -140,12 +164,15 @@ class GTF(Track):
         df = df[(df["end"] - df["start"]) > region_length * len_ratio_th]
         features = []
         for _, row in df.iterrows():
+            print(row['feature_name'])
+            if self._drop_label(row['feature_name']):
+                continue
             gf = GraphicFeature(
                 start=row['start'],
                 end=row['end'],
                 strand=(1 if row['strand'] == '+' else -1),
-                label=row['feature_name'],
-                color=random.choice(self.colors),
+                label=self._choose_label(row['feature_name']),
+                color=self._choose_color(row['feature_name']),
             )
             features.append(gf)
         record = GraphicRecord(
